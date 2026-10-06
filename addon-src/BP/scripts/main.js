@@ -154,11 +154,22 @@ function unlock(player) {
   player.onScreenDisplay.setActionBar("");
 }
 
-// ---------- 顶部大字标题（每 N 秒刷新，接近"顶部倒计时"） ----------
+// ---------- 顶部大字标题（每 N 秒刷新）+ 副标题常驻 ----------
 function showTopTimer(player, remain) {
   try {
     const text = "§e剩余游玩时间: §f" + formatTime(remain);
+    // 主标题：屏幕中上方大字（最醒目）
     player.onScreenDisplay.setTitle(text, { fadeInDuration: 0.1, stayDuration: 1.5, fadeOutDuration: 0.2 });
+    // 副标题：标题正下方常驻（stayDuration 长，贴近"顶部倒计时"观感）
+    player.onScreenDisplay.updateSubtitle("§6请合理安排游戏时间，时间到后将自动锁定");
+  } catch (e) { }
+}
+
+// ---------- 时间到：常驻大字循环（直到玩家重新验证才停止） ----------
+function timeUpBanner(player) {
+  try {
+    player.onScreenDisplay.setTitle("§c⚠ 游玩时间已结束 ⚠", { fadeInDuration: 0.1, stayDuration: 2.6, fadeOutDuration: 0.3 });
+    player.onScreenDisplay.updateSubtitle("§f物品栏等已被锁定\n§e点击「我已长大」重新验证");
   } catch (e) { }
 }
 
@@ -222,13 +233,11 @@ function openVerification(player) {
   }).catch(() => { openForms.delete(key); });
 }
 
-// ---------- 时间到（MessageForm + 大字标题兜底） ----------
+// ---------- 时间到（MessageForm + 常驻大字兜底） ----------
 function showTimeUp(player) {
   const key = player.id + ":timeup";
-  // 大字标题兜底：即使表单被系统吞掉，玩家也能看到限制提示
-  try {
-    player.onScreenDisplay.setTitle("§c游玩时间已结束\n§f物品栏等已被锁定", { fadeInDuration: 0.2, stayDuration: 3, fadeOutDuration: 0.5 });
-  } catch (e) { }
+  // 常驻大字兜底：即使表单被系统吞掉，玩家也能持续看到限制提示
+  timeUpBanner(player);
   if (openForms.has(key)) return;
   openForms.add(key);
   const f = new MessageFormData()
@@ -245,14 +254,14 @@ function showTimeUp(player) {
       // 取消或选择离开：保持锁定，稍后再提醒
       system.runTimeout(() => {
         if (getState(player) === TIME_UP) showTimeUp(player);
-      }, TICK_PER_SECOND * 10);
+      }, TICK_PER_SECOND * 6);
     }
   }).catch(() => {
     openForms.delete(key);
-    // 弹窗失败：5 秒后重试，保证最终弹出
+    // 弹窗失败：3 秒后重试，保证最终弹出
     system.runTimeout(() => {
       if (getState(player) === TIME_UP) showTimeUp(player);
-    }, TICK_PER_SECOND * 5);
+    }, TICK_PER_SECOND * 3);
   });
 }
 
@@ -348,6 +357,10 @@ system.runInterval(() => {
       }
     } else if (st === TIME_UP) {
       p.onScreenDisplay.setActionBar("§c未成年人保护 - 游玩时间已结束，物品栏已锁定");
+      // 常驻大字循环：每 3 秒重显示一次"时间到"大标题，直到玩家重新验证
+      if (system.currentTick % (TICK_PER_SECOND * 3) === 0) {
+        timeUpBanner(p);
+      }
     }
   }
 }, TICK_PER_SECOND);
