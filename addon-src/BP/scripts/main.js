@@ -2,9 +2,13 @@
 // 年龄限制游戏时长，多结局版（基岩版转制）
 // 原模组: Minor Safety Mod v1.0.0 (Forge 1.20.1, by SereneCloud)
 // 二次开发: ET | 许可证: MIT（保留原作者署名）
-// 兼容: Minecraft 基岩版 1.20.60 ~ 1.26+
+// 兼容: Minecraft 基岩版 1.20.60 ~ 1.26+（依赖 @minecraft/server 1.8.0）
 // 功能: 登录身份验证(姓名+年龄) / 未成年人5分钟限时锁定 /
 //       成人按年龄段趣味提示(多结局) / 验证令牌 / 聊天指令兜底
+// 显示方案（基岩版无 HUD 左上角文本 API，采用三重保障）:
+//   - 顶部大字标题 setTitle（每 5 秒刷新，最接近"顶部倒计时"）
+//   - 右侧常驻记分板 scoreboard sidebar（实时倒数，最持久）
+//   - 底部动作条 setActionBar（每秒刷新）
 // ============================================================
 import { world, system, ItemStack } from "@minecraft/server";
 import { ModalFormData, MessageFormData } from "@minecraft/server-ui";
@@ -18,6 +22,7 @@ const PROP_AGE = "agelimit:age";
 const PROP_REMAIN = "agelimit:remaining"; // 剩余秒数
 const PROP_STATE = "agelimit:state";       // 0=未验证 1=成人 2=未成年游玩中 3=时间到(锁定)
 const VERIFY_ITEM = "agelimit:verify_token";
+const SCOREBOARD_ID = "agelimit_timer";
 const UNVERIFIED = 0, ADULT = 1, MINOR_PLAYING = 2, TIME_UP = 3;
 
 // 正在展示的表单（防止重复弹窗）
@@ -94,12 +99,39 @@ function getAdultMessage(age) {
 function getState(p) { return p.getDynamicProperty(PROP_STATE) ?? UNVERIFIED; }
 function setState(p, s) { p.setDynamicProperty(PROP_STATE, s); }
 
+// ---------- 常驻记分板（右侧实时倒数，最可靠的 HUD 替代） ----------
+function ensureObjective() {
+  try {
+    let obj = world.scoreboard.getObjective(SCOREBOARD_ID);
+    if (!obj) {
+      obj = world.scoreboard.addObjective(SCOREBOARD_ID, "剩余游玩时间");
+    }
+    return obj;
+  } catch (e) { return null; }
+}
+
+function setScoreboard(player, secs) {
+  try {
+    const obj = ensureObjective();
+    if (!obj) return;
+    obj.setScore(player, Math.max(0, secs));
+    world.scoreboard.setObjectiveAtDisplaySlot("sidebar", obj);
+  } catch (e) { }
+}
+
+function clearScoreboard(player) {
+  try {
+    const obj = ensureObjective();
+    if (obj && player) obj.removeParticipant(player);
+  } catch (e) { }
+}
+
 // ---------- 锁定 / 解锁 ----------
 function lock(player) {
   try {
     if (player.inputPermissions) {
       player.inputPermissions.movementEnabled = false;
-      player.inputPermissions.cameraEnabled = false;
+      // 保留 cameraEnabled（不锁视角，避免干扰表单交互）
     }
   } catch (e) { /* 旧版本不支持时忽略 */ }
   player.addEffect("slowness", 999999, { amplifier: 255, showParticles: false });
@@ -120,6 +152,14 @@ function unlock(player) {
   player.removeEffect("mining_fatigue");
   player.removeEffect("weakness");
   player.onScreenDisplay.setActionBar("");
+}
+
+// ---------- 顶部大字标题（每 N 秒刷新，接近"顶部倒计时"） ----------
+function showTopTimer(player, remain) {
+  try {
+    const text = "§e剩余游玩时间: §f" + formatTime(remain);
+    player.onScreenDisplay.setTitle(text, { fadeInDuration: 0.1, stayDuration: 1.5, fadeOutDuration: 0.2 });
+  } catch (e) { }
 }
 
 // ---------- 身份验证（ModalForm） ----------
@@ -163,6 +203,7 @@ function openVerification(player) {
       // ---- 结局A：成人放行，多结局趣味提示 ----
       setState(player, ADULT);
       unlock(player);
+      clearScoreboard(player);
       const msg = getAdultMessage(age);
       new MessageFormData()
         .title("§a成人验证通过！")
@@ -174,14 +215,20 @@ function openVerification(player) {
       setState(player, MINOR_PLAYING);
       player.setDynamicProperty(PROP_REMAIN, MINOR_SECONDS);
       unlock(player);
+      setScoreboard(player, MINOR_SECONDS);
+      showTopTimer(player, MINOR_SECONDS);
       player.sendMessage("§e未成年人保护：剩余游玩时间 " + MINOR_SECONDS + " 秒（5分钟），请合理安排游戏时间。");
     }
   }).catch(() => { openForms.delete(key); });
 }
 
-// ---------- 时间到（MessageForm） ----------
+// ---------- 时间到（MessageForm + 大字标题兜底） ----------
 function showTimeUp(player) {
   const key = player.id + ":timeup";
+  // 大字标题兜底：即使表单被系统吞掉，玩家也能看到限制提示
+  try {
+    player.onScreenDisplay.setTitle("§c游玩时间已结束\n§f物品栏等已被锁定", { fadeInDuration: 0.2, stayDuration: 3, fadeOutDuration: 0.5 });
+  } catch (e) { }
   if (openForms.has(key)) return;
   openForms.add(key);
   const f = new MessageFormData()
@@ -192,6 +239,7 @@ function showTimeUp(player) {
   f.show(player).then((res) => {
     openForms.delete(key);
     if (!res.canceled && res.selection === 0) {
+      clearScoreboard(player);
       openVerification(player);
     } else {
       // 取消或选择离开：保持锁定，稍后再提醒
@@ -199,7 +247,13 @@ function showTimeUp(player) {
         if (getState(player) === TIME_UP) showTimeUp(player);
       }, TICK_PER_SECOND * 10);
     }
-  }).catch(() => { openForms.delete(key); });
+  }).catch(() => {
+    openForms.delete(key);
+    // 弹窗失败：5 秒后重试，保证最终弹出
+    system.runTimeout(() => {
+      if (getState(player) === TIME_UP) showTimeUp(player);
+    }, TICK_PER_SECOND * 5);
+  });
 }
 
 // ---------- 发放验证令牌 ----------
@@ -217,21 +271,27 @@ function ensureToken(player) {
 
 // ---------- 玩家进入世界 ----------
 world.afterEvents.playerSpawn.subscribe((ev) => {
-  if (!ev.initialSpawn) return;
   const p = ev.player;
+  // 清理可能残留的表单锁（防止弹窗被永久吞掉）
+  openForms.delete(p.id);
+  openForms.delete(p.id + ":timeup");
+  if (!ev.initialSpawn) return;
   const st = getState(p);
   if (st === UNVERIFIED) {
     lock(p);
+    setScoreboard(p, 0);
     p.onScreenDisplay.setActionBar("§c未成年人保护 - 请先完成身份验证（使用验证令牌或输入 !verify）");
     ensureToken(p);
     system.runTimeout(() => { if (getState(p) === UNVERIFIED) openVerification(p); }, TICK_PER_SECOND * 2);
   } else if (st === TIME_UP) {
     lock(p);
+    setScoreboard(p, 0);
     ensureToken(p);
     system.runTimeout(() => { if (getState(p) === TIME_UP) showTimeUp(p); }, TICK_PER_SECOND * 2);
   } else if (st === MINOR_PLAYING) {
     // 未成年玩家重进世界：继续计时
     const remain = p.getDynamicProperty(PROP_REMAIN) ?? MINOR_SECONDS;
+    setScoreboard(p, remain);
     p.onScreenDisplay.setActionBar("§e未成年人保护 - 剩余游玩时间: " + formatTime(remain));
   }
 });
@@ -267,11 +327,17 @@ system.runInterval(() => {
         p.setDynamicProperty(PROP_REMAIN, 0);
         setState(p, TIME_UP);
         lock(p);
+        setScoreboard(p, 0);
         p.onScreenDisplay.setActionBar("§c未成年人保护 - 游玩时间已结束，物品栏已锁定");
         showTimeUp(p);
       } else {
         p.setDynamicProperty(PROP_REMAIN, remain);
+        // 三重显示：底部动作条（每秒）+ 记分板（实时）+ 顶部大字（每 5 秒/最后 10 秒每秒）
         p.onScreenDisplay.setActionBar("§e未成年人保护 - 剩余游玩时间: " + formatTime(remain));
+        setScoreboard(p, remain);
+        if (remain <= 10 || remain % 5 === 0) {
+          showTopTimer(p, remain);
+        }
       }
     } else if (st === UNVERIFIED) {
       p.onScreenDisplay.setActionBar("§c未成年人保护 - 请先完成身份验证（使用验证令牌或输入 !verify）");
