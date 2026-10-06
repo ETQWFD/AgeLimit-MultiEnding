@@ -1,0 +1,9 @@
+{
+    "name": "年龄限制游戏时长，多结局版",
+    "version": "1.2.0",
+    "entry": "main.py",
+    "apiVersion": "1.0.0",
+    "desc": "未成年人保护模组：进世界强制姓名+年龄验证，未成年人限时5分钟游玩，时间到自动锁定；成年人按年龄区间弹出趣味多结局提示。二次开发自 Minor Safety Mod（原作者 SereneCloud，MIT 许可），版权 ET/ET协会。",
+    "author": "ET",
+    "license": "MIT"
+}
