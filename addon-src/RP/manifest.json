@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "年龄限制游戏时长，多结局版（资源包）",
+    "description": "未成年人保护模组基岩版转制：身份验证 / 未成年人5分钟限时 / 多结局成人趣味提示。原模组 Minor Safety Mod (Forge 1.20.1) by SereneCloud，二次开发 ET (MIT)。",
+    "uuid": "d51ebcb5-0454-4881-965f-d3822516c0e0",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 20, 60]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "f7d24081-45cb-405c-99de-292b5f3df84e",
+      "version": [1, 0, 0]
+    }
+  ]
+}

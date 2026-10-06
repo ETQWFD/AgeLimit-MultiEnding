@@ -1,0 +1,9 @@
+{
+  "resource_pack_name": "年龄限制游戏时长，多结局版",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "agelimit_verify_token": {
+      "textures": "textures/items/verify_token"
+    }
+  }
+}
